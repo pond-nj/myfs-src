@@ -1,0 +1,12 @@
+In HDFS:
+
+hdfs -put testfile1 /tmp
+hdfs -put testfile2 /tmp
+
+in HDFS file system:
+/tmp/testfile1
+/tmp/tmp/testfile1
+
+On DNs, for example, DN1:
+chunk1 <- /tmp/testfile1
+chunk2 <- /tmp/tmp/testfile1

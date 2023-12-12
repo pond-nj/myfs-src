@@ -1,0 +1,27 @@
+
+// HDFS
+
+// Client
+// write a file `file0` into HDFS `dir1`
+
+// Master Node (not for storage, just for metadata)
+// dir1 (metadata)
+// dir1/file0 (metadata)
+
+// file0 => divided into chunks including data chunks and parity chunks
+// data chunk 0 => distributed to SN0
+
+// on master node, call `fsck`
+// - for dir1/file0, there are several chunks, and one of its chunk (chunk0) is on SN0 at some path.
+
+
+// Storage Node 0
+// maintain a directory, to store the chunks that they received from the master node.
+// => maintained directory is /tmp/20231207/ (local directory)
+// /tmp/20231207/blk_1209389 (SN0 local directory)
+
+// ssh SN0; cd /tmp/20231207/; ls;
+
+// when Client requests for the dir1/file0, how does the master/SN0 know?
+// master -> metadata, chunk <=> file mapping information
+// master knows, it requests the storage node to send the chunk on its local directory to the client.
