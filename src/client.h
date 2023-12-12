@@ -14,7 +14,6 @@
 #define WRITE_OPERATION '2'
 #define BUFFER_SIZE 1024
 
-int ss_num = 0;
 int* ss_sockets;
 
 // perform handshake and return int array of socket descriptor
@@ -102,7 +101,7 @@ uint64_t send_chunk(int* ss_socket, const char* data_buffer, uint64_t chunk_size
         return -1;
     }
 
-    return 0;
+    return chunk_size;
 }
 
 char* recv_chunk(int* ss_socket, size_t* chunk_size)
@@ -118,7 +117,7 @@ char* recv_chunk(int* ss_socket, size_t* chunk_size)
     }
     length = ntohl(length);
 
-    char *buffer = (char *)malloc(length+1);
+    char *buffer = (char *)malloc(sizeof(char) * (length+1));
     if (!buffer) {
         perror("Error in allocating memory to receive message from server\n");
         return NULL;
@@ -146,22 +145,24 @@ char* recv_chunk(int* ss_socket, size_t* chunk_size)
 
 // replace pread in local filesystem
 // pread(fi->fh, buf, size, offset)
-int client_read(const char *path, int fd, char* buf, size_t count, off_t offset){
+int client_read(const char *path, int fd, char* buf, size_t count, off_t file_offset){
     // pread() reads up to `count` bytes from file descriptor `fd` at `offset` 
     // offset (from the start of the file) into the buffer starting at
     // `buf`.  The file offset is not changed.
 
-
     // Step 1: query local metadata
-    size_t target_chunk_size = query_file(path);
-    if (target_chunk_size == (size_t)(-1)) {
+    size_t filesize = query_filesize(path);
+    if (filesize == (size_t)(-1)) {
         printf("target file is not found in bbfs");
         log_error("read file out found");
     }
+    size_t target_chunk_size = get_chunk_size(filesize);
 
     // Step 2: send requests to storage servers
     int data_chunk_count = 0;
     int parity_chunk_count = 0;
+
+    int failed_server = -1;
 
     for (int i=0; i<ss_num; i++) {
         uint64_t feedback = send_recv_operation(&ss_sockets[i], READ_OPERATION, target_chunk_size, path);
@@ -170,24 +171,77 @@ int client_read(const char *path, int fd, char* buf, size_t count, off_t offset)
         } else if (feedback == 0) {
             parity_chunk_count += 1;
         } else {
-            perror("failed to connect to storage server");
             log_error("failed to connect to storage server");
-            return -1;
+            failed_server = i;
         }
     }
 
-    assert((data_chunk_count + parity_chunk_count) == ss_num);
+    char * tmp_file = (char *)malloc(sizeof(char) * target_chunk_size * (ss_num-1));
 
-    // TODO: read (n-1) servers (scenario: the down one is data storage/parity storage)
+    if(data_chunk_count + parity_chunk_count == ss_num || failed_server == ss_num - 1){
+        // no storage server down, or parity server down
+        // Step 3: recv blocks from storage servers
+        for (int i=0; i<ss_num-1; i++) {
+            size_t chunk_size;
+            char * ss_buf = recv_chunk(&ss_sockets[i], &chunk_size);
 
+            if(i != ss_num - 2)
+                assert(chunk_size == target_chunk_size);
+            else
+                assert(chunk_size == get_last_chunk_size(filesize));
 
-    // Step 3: recv blocks from storage servers
-    for (int i=0; i<ss_num; i++) {
+            memcpy(tmp_file, ss_buf, chunk_size);
+            tmp_file += chunk_size;
+            free(ss_buf);
+        }
+    }else{
+        // one storage server is down
+
+        // read parity
         size_t chunk_size;
-        char * ss_buf = recv_chunk(&ss_sockets[i], &chunk_size);
-        memcpy(buf, ss_buf, offset + chunk_size);
-        offset += chunk_size;
+        char * recover_buf = recv_chunk(&ss_sockets[ss_num - 1], &chunk_size);
+        assert(chunk_size == target_chunk_size);
+
+        // calc recovery size
+        size_t skip_by;
+        if(failed_server == ss_num - 2){
+            skip_by = get_last_chunk_size(filesize);
+        }else{
+            skip_by = chunk_size;
+        }
+
+        char* recover_at;
+
+        for (int i=0; i<ss_num-1; i++) {
+            if(failed_server == i){
+                // skip first
+                recover_at = tmp_file;
+                tmp_file += skip_by;
+            }else{
+                size_t chunk_size;
+                char * ss_buf = recv_chunk(&ss_sockets[i], &chunk_size);
+
+                if(i != ss_num - 2)
+                    assert(chunk_size == target_chunk_size);
+                else
+                    assert(chunk_size == get_last_chunk_size(filesize));
+
+                memcpy(tmp_file, ss_buf, chunk_size);
+                tmp_file += chunk_size;
+
+                // recover
+                for(int j=0; j<skip_by; j+=1){
+                    recover_buf[j] = recover_buf[j] ^ recover_buf[j];
+                }
+            }
+        }
+
+        memcpy(recover_at, recover_buf, skip_by);
+        free(recover_buf);
     }
+
+    memcpy(buf, tmp_file + file_offset, count);
+    free(tmp_file);
 
     // should return exactly the number of bytes requested except on EOF or error
     return 0;
@@ -195,21 +249,25 @@ int client_read(const char *path, int fd, char* buf, size_t count, off_t offset)
 
 // replace pwrite in local filesystem
 // call by bb_write
+// write from buffer to file at fd
 int client_write(const char* filename, int fd, const char* buf, size_t size, off_t offset) {
     // divide the files chunks by `ss_num-1`
 
     // Step 1: initialise the pointers
-    const char *write_headers[ss_num];
-    uint64_t chunk_size = size / (ss_num-1);
-    for (int i=0; i<ss_num; i++) {
+    const char *write_headers[ss_num-1];
+
+    uint64_t chunk_size = get_chunk_size(size);
+    for (int i=0; i<ss_num-1; i++) {
         write_headers[i] = buf + chunk_size * i;
     }
 
     // Step 2: XOR the parity chunk
     char* parity_chunk = (char*)malloc(sizeof(char) * chunk_size);
+    memset(parity_chunk, 0, sizeof(char) * chunk_size);
     for (int i=0; i<chunk_size; i++) {
-        for (int ss=0; ss<ss_num; ss++) {
-            parity_chunk[i] = parity_chunk[i] ^ write_headers[ss][i];
+        for (int ss=0; ss<ss_num-1; ss++) {
+            if(ss * chunk_size + i < size)
+                parity_chunk[i] = parity_chunk[i] ^ write_headers[ss][i];
         }
     }
 
@@ -233,7 +291,13 @@ int client_write(const char* filename, int fd, const char* buf, size_t size, off
 
     // Step 4: send out the chunks
     for (int i=0; i<ss_num; i++) {
-        if (send_chunk(&ss_sockets[i], write_headers[i], chunk_size) != chunk_size) {
+
+        size_t send_size = chunk_size;
+        if(i == ss_num - 2){
+            send_size = get_last_chunk_size(size);
+        }
+
+        if (send_chunk(&ss_sockets[i], write_headers[i], send_size) != send_size) {
             printf("failed to send chunk to storage server");
             return -1;
         }

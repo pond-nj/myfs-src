@@ -24,10 +24,12 @@
 #include <stdio.h>
 #include <fuse.h>
 #include <stdlib.h>
+#define ss_num 4
 
 typedef struct FileMetadata{
   char* name;
   size_t chunk_size;
+  size_t file_size;
 } FileMetadata;
 
 // only support flat namespace

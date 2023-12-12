@@ -19,21 +19,39 @@ Metadata metadata_init(){
   return m;
 }
 
-int add_file(const char *filename, size_t chunk_size) {
+// in case size = 10, ss_num-1 = 3, we need chunksize = 4
+// chunksize = ceil(size/ss_num-1)
+size_t get_chunk_size(size_t file_size){
+  return (size + ss_num-2) / (ss_num-1);
+}
+
+// in case size = 10, ss_num-1 = 3, we need chunksize = 4
+// last_chunk_size = 2
+size_t get_last_chunk_size(size_t file_size){
+  size_t chunk_size = get_chunk_size(file_size);
+  size_t last_chunk_size = file_size % chunk_size;
+  if(last_chunk_size == 0)
+      last_chunk_size = chunk_size;
+  return last_chunk_size;
+}
+
+int add_file(const char *filename, size_t file_size) {
   int curr_num_file = BB_DATA->metadata.count_files;
   assert(curr_num_file + 1 <= MAX_FILES);
   BB_DATA->metadata.files[curr_num_file].name = (char *)malloc(sizeof(char) * MAX_PATHNAME);
   strcpy(BB_DATA->metadata.files[curr_num_file].name, filename);
-  BB_DATA->metadata.files[curr_num_file].chunk_size = chunk_size;
+
+  BB_DATA->metadata.files[curr_num_file].file_size = file_size;
+  BB_DATA->metadata.files[curr_num_file].chunk_size = get_chunk_size(file_size);
 
   BB_DATA->metadata.count_files++;
   return 0;
 }
 
-size_t query_file(const char *filename) {
+size_t query_filesize(const char *filename) {
   for (int i=0; i<BB_DATA->metadata.count_files; i++) {
     if (strcmp(BB_DATA->metadata.files[i].name, filename) == 0) {
-      return BB_DATA->metadata.files[i].chunk_size;
+      return BB_DATA->metadata.files[i].file_size;
     }
   }
   return (size_t)(-1);
