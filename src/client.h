@@ -316,3 +316,16 @@ int client_utime(const char *path, struct utimbuf *ubuf){
     memset(ubuf, 0, sizeof(struct utimbuf));
     return 0;
 }
+
+int client_lstat(const char *path, struct stat *statbuf){
+    memset(statbuf, 0, sizeof(stat));
+
+    //set mode, otherwise get Input/Output Error
+    if(strcmp(path, "/") == 0){
+        statbuf->st_mode = 16895; //for 40777 of dir =>drwxrwxrwx
+    }else{
+        statbuf->st_mode = 33279; //for 100777 of regular file, check __S_IFREG for regular file checking
+    }
+
+    return 0;
+}
