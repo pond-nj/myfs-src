@@ -8,7 +8,8 @@ FILE * server_log_open(int n)
     
     // very first thing, open up the logfile and mark that we got in
     // here.  If we can't open the logfile, we're dead.
-    char log_filename[] = "/home/csci5550/CSCI5550-project/server_log/temp.log";
+    char log_filename[100];
+    sprintf(log_filename, "/home/csci5550/CSCI5550-project/server_log/temp_%d.log", n);
 
     printf("Server %d: try create log file %s\n", n, log_filename);
 

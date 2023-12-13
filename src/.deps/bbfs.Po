@@ -81,18 +81,18 @@ bbfs.o: bbfs.c /usr/include/stdc-predef.h config.h params.h \
  /usr/include/x86_64-linux-gnu/bits/confname.h \
  /usr/include/x86_64-linux-gnu/bits/unistd.h \
  /usr/include/x86_64-linux-gnu/bits/unistd_ext.h \
- /usr/include/x86_64-linux-gnu/sys/xattr.h old_bbfs.h log.h \
- /usr/include/assert.h storage.h \
+ /usr/include/x86_64-linux-gnu/sys/xattr.h log.h metadata.h \
+ /usr/include/assert.h client.h \
  /usr/include/x86_64-linux-gnu/sys/socket.h \
  /usr/include/x86_64-linux-gnu/bits/socket.h \
  /usr/include/x86_64-linux-gnu/bits/socket_type.h \
  /usr/include/x86_64-linux-gnu/bits/sockaddr.h \
  /usr/include/x86_64-linux-gnu/bits/socket-constants.h \
- /usr/include/x86_64-linux-gnu/bits/socket2.h /usr/include/netinet/in.h \
- /usr/include/x86_64-linux-gnu/bits/in.h /usr/include/endian.h \
- /usr/include/x86_64-linux-gnu/bits/byteswap.h \
- /usr/include/x86_64-linux-gnu/bits/uintn-identity.h server_log.h \
- client.h /usr/include/arpa/inet.h metadata.h new_bbfs.h
+ /usr/include/x86_64-linux-gnu/bits/socket2.h /usr/include/arpa/inet.h \
+ /usr/include/netinet/in.h /usr/include/x86_64-linux-gnu/bits/in.h \
+ /usr/include/endian.h /usr/include/x86_64-linux-gnu/bits/byteswap.h \
+ /usr/include/x86_64-linux-gnu/bits/uintn-identity.h storage.h \
+ server_log.h
 
 /usr/include/stdc-predef.h:
 
@@ -298,13 +298,13 @@ params.h:
 
 /usr/include/x86_64-linux-gnu/sys/xattr.h:
 
-old_bbfs.h:
-
 log.h:
+
+metadata.h:
 
 /usr/include/assert.h:
 
-storage.h:
+client.h:
 
 /usr/include/x86_64-linux-gnu/sys/socket.h:
 
@@ -318,6 +318,8 @@ storage.h:
 
 /usr/include/x86_64-linux-gnu/bits/socket2.h:
 
+/usr/include/arpa/inet.h:
+
 /usr/include/netinet/in.h:
 
 /usr/include/x86_64-linux-gnu/bits/in.h:
@@ -328,12 +330,6 @@ storage.h:
 
 /usr/include/x86_64-linux-gnu/bits/uintn-identity.h:
 
+storage.h:
+
 server_log.h:
-
-client.h:
-
-/usr/include/arpa/inet.h:
-
-metadata.h:
-
-new_bbfs.h:

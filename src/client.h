@@ -44,12 +44,10 @@ int* client_connect_to_servers(){
     return ss_sockets;
 }
 
-// Helper functions
+// Helper functions 
 
 // Send requests to storage servers and wait for the confirmed response
 uint64_t send_recv_operation(int* ss_socket, char operation, uint64_t chunk_size, const char* filename) {
-
-    
     size_t total_size = sizeof(char) + sizeof(size_t) + strlen(filename) + 1;
 
     // create buffer
@@ -65,14 +63,16 @@ uint64_t send_recv_operation(int* ss_socket, char operation, uint64_t chunk_size
     strcpy(req_buffer+sizeof(char)+sizeof(size_t), filename);
 
     // sending out the request
+    printf("CLEINT: sending operation %c to socket %d\n", operation, *ss_socket);
     if (write(*ss_socket, req_buffer, total_size) < 0) {
         perror("error sending operation to socket");
         return -1;
     }
-
+    printf("CLEINT: finished sending operation %c to socket %d and wait for reply\n", operation, *ss_socket);
     // wait for the storage server response
     char* resp_buffer = (char*)malloc(BUFFER_SIZE);
 
+    // there is no matching send??
     int ss_response = recv(*ss_socket, resp_buffer, BUFFER_SIZE-1, 0);
     if (ss_response < 0) {
         perror("error receiving operation confirmation from storage server");
@@ -87,18 +87,22 @@ uint64_t send_recv_operation(int* ss_socket, char operation, uint64_t chunk_size
     return ss_resp;
 }
 
-uint64_t send_chunk(int* ss_socket, const char* data_buffer, uint64_t chunk_size) {
+uint64_t send_chunk(int* ss_socket, const char* data_buffer, size_t chunk_size) {
+    printf("CLIENT: sending chunk size %ld to socket %d \n", chunk_size, *ss_socket);
     unsigned int chunk_size_buffer = htonl(chunk_size);
+    printf("CLIENT: sending chunk size buffer %u to socket %d \n", chunk_size_buffer, *ss_socket);
     // Send data size
-    if (write(*ss_socket, &chunk_size_buffer, sizeof(chunk_size)) < 0) { 
+    if (write(*ss_socket, &chunk_size_buffer, sizeof(chunk_size_buffer)) < 0) { 
         perror("error writing to socket");
         return -1;
     }
     // Send data 
+    printf("CLIENT: sending chunk data buffer %u to socket %d \n", chunk_size_buffer, *ss_socket);
     if (write(*ss_socket, data_buffer, chunk_size) < 0) { 
         perror("error writing to socket");
         return -1;
     }
+    printf("CLIENT: finish sending chunk data buffer %u to socket %d \n", chunk_size_buffer, *ss_socket);
 
     return chunk_size;
 }
@@ -248,14 +252,22 @@ int client_read(const char *path, int fd, char* buf, size_t count, off_t file_of
 
 // replace pwrite in local filesystem
 // call by bb_write
-// write from buffer to file at fd
+// write from buffer to file at fd at offset
 int client_write(const char* filename, int fd, const char* buf, size_t size, off_t offset) {
+
+    if(find_file_idx(filename) == (size_t)(-1)){
+        add_file(filename, size);
+    }else{
+        change_file_size(filename, query_filesize(filename) + size);
+    }
     // divide the files chunks by `ss_num-1`
 
     // Step 1: initialise the pointers
     const char *write_headers[ss_num-1];
 
     uint64_t chunk_size = get_chunk_size(size);
+    printf("CLIENT: normal chunk size: %ld\n", chunk_size);
+
     for (int i=0; i<ss_num-1; i++) {
         write_headers[i] = buf + chunk_size * i;
     }
@@ -274,6 +286,7 @@ int client_write(const char* filename, int fd, const char* buf, size_t size, off
     int data_chunk_count = 0;
     int parity_chunk_count = 0;
     for (int i=0; i<ss_num; i++) {
+        printf("CLIENT: start %d send_recv_operation\n", i);
         uint64_t feedback = send_recv_operation(&ss_sockets[i], WRITE_OPERATION, chunk_size, filename);
         if (feedback == 1) {
             data_chunk_count += 1;
@@ -284,28 +297,31 @@ int client_write(const char* filename, int fd, const char* buf, size_t size, off
             log_error("failed to connect to storage server");
             return -1;
         }
+
+        printf("CLIENT: done %d send_recv_operation\n", i);
     }
     assert((data_chunk_count + parity_chunk_count) == ss_num);
 
 
     // Step 4: send out the chunks
-    for (int i=0; i<ss_num; i++) {
-
+    for (int i=0; i<ss_num-1; i++) {
+        printf("CLIENT: start %d sending chunk \n", i);
         size_t send_size = chunk_size;
-        if(i == ss_num - 2){
+        if (i == ss_num - 2){
             send_size = get_last_chunk_size(size);
         }
 
         if (send_chunk(&ss_sockets[i], write_headers[i], send_size) != send_size) {
-            printf("failed to send chunk to storage server");
+            printf("failed to send data chunk to storage server %d", i);
             return -1;
         }
     }
-
-    // Step 5: update local metadata
-    if (add_file(filename, chunk_size) != 0) {
-        printf("failed to modify metadata");
+    if (send_chunk(&ss_sockets[ss_num-1], parity_chunk, chunk_size) != chunk_size) {
+        printf("failed to send parity chunk to storage server %d", ss_num-1);
+        return -1;
     }
+
+    printf("CLIENT: done write\n");
 
     return 0;
 }
@@ -326,5 +342,15 @@ int client_lstat(const char *path, struct stat *statbuf){
         statbuf->st_mode = 33279; //for 100777 of regular file, check __S_IFREG for regular file checking
     }
 
+    return 0;
+}
+
+// must implement in case of "touch tmp", this will not call write
+int client_open(const char* path, int flags){
+    // create new file
+    log_msg("CLIENT: call open\n");
+    if( (flags & O_WRONLY) | (flags & O_CREAT)){
+        add_file(path, 0);
+    }
     return 0;
 }

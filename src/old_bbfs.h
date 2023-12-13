@@ -45,7 +45,7 @@ void *bb_init(struct fuse_conn_info *conn)
     log_conn(conn);
     log_fuse_context(fuse_get_context());
 
-    return BB_DATA;
+    // return BB_DATA;
 }
 
 /**
@@ -120,20 +120,6 @@ int bb_mkdir(const char *path, mode_t mode)
     // bb_fullpath(fpath, path);
 
     // return log_syscall("mkdir", mkdir(fpath, mode), 0);
-    return -1;
-}
-
-/** Remove a file */
-int bb_unlink(const char *path)
-{
-    assert(0);
-    // char fpath[PATH_MAX];
-
-    // log_msg("bb_unlink(path=\"%s\")\n",
-    //         path);
-    // bb_fullpath(fpath, path);
-
-    // return log_syscall("unlink", unlink(fpath), 0);
     return -1;
 }
 
@@ -236,15 +222,13 @@ int bb_chown(const char *path, uid_t uid, gid_t gid)
 /** Change the size of a file */
 int bb_truncate(const char *path, off_t newsize)
 {
-    assert(0);
-    // char fpath[PATH_MAX];
+    char fpath[PATH_MAX];
 
-    // log_msg("\nbb_truncate(path=\"%s\", newsize=%lld)\n",
-    //         path, newsize);
-    // bb_fullpath(fpath, path);
+    log_msg("\nbb_truncate(path=\"%s\", newsize=%lld)\n",
+            path, newsize);
+    bb_fullpath(fpath, path);
 
-    // return log_syscall("truncate", truncate(fpath, newsize), 0);
-    return -1;
+    return log_syscall("truncate", truncate(fpath, newsize), 0);
 }
 
 

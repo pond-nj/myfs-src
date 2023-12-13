@@ -86,7 +86,7 @@ void log_fuse_context(struct fuse_context *context)
     //	void *private_data;
     log_struct(context, private_data, %08x, );
     log_struct(((struct bb_state *)context->private_data), logfile, %08x, );
-    log_struct(((struct bb_state *)context->private_data), server_sockets_des, %08x, );
+    // log_struct(((struct bb_state *)context->private_data), server_sockets_des, %08x, );
     // log_struct(((struct bb_state *)context->private_data), metadata, %08x, );
     // log_struct(((struct bb_state *)context->private_data), rootdir, %s, );
 	

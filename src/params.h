@@ -24,26 +24,13 @@
 #include <stdio.h>
 #include <fuse.h>
 #include <stdlib.h>
-#define ss_num 4
-
-typedef struct FileMetadata{
-  char* name;
-  size_t chunk_size;
-  size_t file_size;
-} FileMetadata;
-
-// only support flat namespace
-typedef struct metadata{
-  // index by file descriptor
-  FileMetadata* files;
-  int count_files;
-} Metadata;
+#define ss_num 4 // TODO
 
 struct bb_state {
   FILE *logfile;
   char *rootdir;
-  int* server_sockets_des;
-  Metadata metadata;
+  // int* server_sockets_des;
+  // Metadata metadata;
 };
 
 
