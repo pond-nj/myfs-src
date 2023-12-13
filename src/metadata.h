@@ -22,7 +22,7 @@ Metadata metadata_init(){
 // in case size = 10, ss_num-1 = 3, we need chunksize = 4
 // chunksize = ceil(size/ss_num-1)
 size_t get_chunk_size(size_t file_size){
-  return (size + ss_num-2) / (ss_num-1);
+  return (file_size + ss_num-2) / (ss_num-1);
 }
 
 // in case size = 10, ss_num-1 = 3, we need chunksize = 4

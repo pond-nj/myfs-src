@@ -38,7 +38,6 @@ int* client_connect_to_servers(){
         printf("connected to %s:%d at socket des %d\n\n", all_storages[i].addr, all_storages[i].port, sd);
 
         ss_sockets[i] = sd;
-        ss_num += 1;
     }
 
     // array of socket desciption

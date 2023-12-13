@@ -13,16 +13,16 @@ typedef struct server{
 
 Server* get_all_storages_info(){
     Server* storages = (Server *) malloc(sizeof(Server) * 4);
-    storages[0].addr = "10.0.54.4";
+    storages[0].addr = "10.0.54.5";
     storages[0].port = 5550;
 
-    storages[1].addr = "10.0.54.4";
+    storages[1].addr = "10.0.54.5";
     storages[1].port = 5551;
 
-    storages[2].addr = "10.0.54.4";
+    storages[2].addr = "10.0.54.6";
     storages[2].port = 5552;
 
-    storages[3].addr = "10.0.54.4";
+    storages[3].addr = "10.0.54.6";
     storages[3].port = 5553;
 
     return storages;
