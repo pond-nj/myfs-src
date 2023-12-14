@@ -80,6 +80,9 @@ int bb_getattr(const char *path, struct stat *statbuf)
 	  path, statbuf);
     bb_fullpath(fpath, path);
 
+
+    log_msg("\n    call lstat(path=\"%s\", statbuf=0x%08x)\n",
+	  fpath, statbuf);
     retstat = log_syscall("lstat", lstat(fpath, statbuf), 0);
     
     log_stat(statbuf);

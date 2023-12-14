@@ -47,10 +47,16 @@ int* client_connect_to_servers(){
 // Helper functions 
 
 // Send requests to storage servers and wait for the confirmed response
-uint64_t send_recv_operation(int* ss_socket, char operation, uint64_t chunk_size, const char* filename) {
-    size_t total_size = sizeof(char) + sizeof(size_t) + strlen(filename) + 1;
+uint64_t send_recv_operation(int* ss_socket, char operation, uint64_t chunk_size, const char* filename, uint64_t offset) {
+    printf("CLIENT: call send_recv_operation( %d, %c, %lu, %s, %lu)\n", *ss_socket, operation, chunk_size, filename, offset);
+
+    char* client_resp_buffer = (char*)malloc(BUFFER_SIZE);    
+
+    // operation | chunk_size | filename\0 | offset
+    size_t total_size = sizeof(char) + sizeof(uint64_t) + sizeof(char) * (strlen(filename) + 1) + sizeof(uint64_t);
 
     // create buffer
+    printf("CLIENT: total_size is %ld\n", total_size);
     char* req_buffer = (char*)malloc(total_size);
     if (req_buffer == NULL) {
         perror("send read requests malloc failed");
@@ -59,8 +65,11 @@ uint64_t send_recv_operation(int* ss_socket, char operation, uint64_t chunk_size
 
     // fill in buffer contents
     req_buffer[0] = operation;
-    memcpy(req_buffer+sizeof(char), &chunk_size, sizeof(size_t));
-    strcpy(req_buffer+sizeof(char)+sizeof(size_t), filename);
+    memcpy(req_buffer+sizeof(char), &chunk_size, sizeof(uint64_t));
+    strcpy(req_buffer+sizeof(char)+sizeof(uint64_t), filename);
+    memcpy(req_buffer+sizeof(char) + sizeof(uint64_t) + sizeof(char) * (strlen(filename) + 1), &offset, sizeof(uint64_t));
+
+    // TODO: test server connection failed & return failed storage server
 
     // sending out the request
     printf("CLEINT: sending operation %c to socket %d\n", operation, *ss_socket);
@@ -68,21 +77,23 @@ uint64_t send_recv_operation(int* ss_socket, char operation, uint64_t chunk_size
         perror("error sending operation to socket");
         return -1;
     }
+    free(req_buffer);
     printf("CLEINT: finished sending operation %c to socket %d and wait for reply\n", operation, *ss_socket);
-    // wait for the storage server response
-    char* resp_buffer = (char*)malloc(BUFFER_SIZE);
 
-    // there is no matching send??
-    int ss_response = recv(*ss_socket, resp_buffer, BUFFER_SIZE-1, 0);
+    // wait for the storage server response
+    
+    memset(client_resp_buffer, 0, BUFFER_SIZE);
+    fprintf(stderr, "CLIENT: finished initialization with client_resp_buffer\n");
+
+    int ss_response = recv(*ss_socket, client_resp_buffer, BUFFER_SIZE-1, 0);
     if (ss_response < 0) {
         perror("error receiving operation confirmation from storage server");
         return -1;
     }
     
     // read the data status from storage server
-    uint64_t ss_resp = resp_buffer[0];
-    free(req_buffer);
-    free(resp_buffer);
+    uint64_t ss_resp = client_resp_buffer[0];
+    free(client_resp_buffer);
 
     return ss_resp;
 }
@@ -108,17 +119,20 @@ uint64_t send_chunk(int* ss_socket, const char* data_buffer, size_t chunk_size) 
 }
 
 char* recv_chunk(int* ss_socket, size_t* chunk_size)
-{
+{   
+    printf("CLIENT: ask at socket %d\n", *ss_socket);
     *chunk_size = 0;
 
     unsigned int length = 0;
     // Receive number of bytes
+
     int bytes_read = read(*ss_socket, &length, sizeof(length)); 
     if (bytes_read <= 0) {
         perror("Error in receiving message from server\n");
         return NULL;
     }
     length = ntohl(length);
+    printf("CLIENT: expect chunk size %d\n", length);
 
     char *buffer = (char *)malloc(sizeof(char) * (length+1));
     if (!buffer) {
@@ -132,11 +146,13 @@ char* recv_chunk(int* ss_socket, size_t* chunk_size)
         bytes_read = read(*ss_socket, pbuf, buflen); // Receive bytes
         if (bytes_read <= 0) {
             perror("Error in receiving message from server\n");
+            printf("CLIENT: Error in receiving message from server\n");
             free(buffer);
             return NULL;
         }
         pbuf += bytes_read;
         buflen -= bytes_read;
+        printf("CLIENT: received %u bytes from server, now have %u bytes\n", bytes_read, length - buflen);
     }
 
     *chunk_size = length;
@@ -149,17 +165,25 @@ char* recv_chunk(int* ss_socket, size_t* chunk_size)
 // replace pread in local filesystem
 // pread(fi->fh, buf, size, offset)
 int client_read(const char *path, int fd, char* buf, size_t count, off_t file_offset){
+    assert(file_offset == 0);
     // pread() reads up to `count` bytes from file descriptor `fd` at `offset` 
     // offset (from the start of the file) into the buffer starting at
     // `buf`.  The file offset is not changed.
 
+    printf("CLIENT: call client_read( %s, %d, %p, %zu, %ld )\n", path, fd, buf, count, file_offset);
+
     // Step 1: query local metadata
     size_t filesize = query_filesize(path);
+
+    printf("CLIENT: stored file size for %s is %zu\n", path, filesize);
+
     if (filesize == (size_t)(-1)) {
         printf("target file is not found in bbfs");
         log_error("read file out found");
     }
     size_t target_chunk_size = get_chunk_size(filesize);
+
+    printf("CLIENT: stored chunk size is %zu\n", target_chunk_size);
 
     // Step 2: send requests to storage servers
     int data_chunk_count = 0;
@@ -168,41 +192,62 @@ int client_read(const char *path, int fd, char* buf, size_t count, off_t file_of
     int failed_server = -1;
 
     for (int i=0; i<ss_num; i++) {
-        uint64_t feedback = send_recv_operation(&ss_sockets[i], READ_OPERATION, target_chunk_size, path);
+        printf("CLIENT: start %d send_recv_operation\n", i);
+        uint64_t feedback = send_recv_operation(&ss_sockets[i], READ_OPERATION, target_chunk_size, path, file_offset);
         if (feedback == 1) {
             data_chunk_count += 1;
         } else if (feedback == 0) {
             parity_chunk_count += 1;
         } else {
             log_error("failed to connect to storage server");
+            printf("CLIENT: FAILED to connect to %d\n", i);
             failed_server = i;
         }
+        printf("CLIENT: done %d send_recv_operation\n", i);
     }
 
-    char * tmp_file = (char *)malloc(sizeof(char) * target_chunk_size * (ss_num-1));
+    char* tmp_file = (char *)malloc(sizeof(char) * target_chunk_size * (ss_num-1));
+    char* tmp_file_offset = tmp_file;
 
     if(data_chunk_count + parity_chunk_count == ss_num || failed_server == ss_num - 1){
         // no storage server down, or parity server down
         // Step 3: recv blocks from storage servers
+        printf("CLIENT: EVERY STORAGE SERVER IS ON\n");
+        char * ss_buf;
         for (int i=0; i<ss_num-1; i++) {
+            
+            printf("CLIENT: ask for chunk from storage server %d\n", i);
             size_t chunk_size;
-            char * ss_buf = recv_chunk(&ss_sockets[i], &chunk_size);
+            ss_buf = recv_chunk(&ss_sockets[i], &chunk_size);
 
-            if(i != ss_num - 2)
+            printf("CLIENT: in total recevied %zu from storage server %d\n", chunk_size, i);
+
+            if (i != ss_num - 2)
                 assert(chunk_size == target_chunk_size);
             else
                 assert(chunk_size == get_last_chunk_size(filesize));
 
-            memcpy(tmp_file, ss_buf, chunk_size);
-            tmp_file += chunk_size;
+            memcpy(tmp_file_offset, ss_buf, chunk_size);
+            tmp_file_offset += chunk_size;
+            printf("CLIENT: tmp_file location: %p\n", tmp_file);
+            printf("CLIENT: tmp_file_offset location: %p\n", tmp_file_offset);
+
+            printf("CLIENT: atttempt to free ss_buf\n");
             free(ss_buf);
+            printf("CLIENT: can free ss_buf\n");
         }
-    }else{
+    }
+    else
+    {
+        printf("CLIENT: storage server %d is down\n", failed_server);
         // one storage server is down
 
         // read parity
+
+        printf("CLIENT: ask for chunk from parity server\n");
         size_t chunk_size;
         char * recover_buf = recv_chunk(&ss_sockets[ss_num - 1], &chunk_size);
+        printf("CLIENT: recevied %zu bytes from parity server\n", chunk_size);
         assert(chunk_size == target_chunk_size);
 
         // calc recovery size
@@ -215,14 +260,17 @@ int client_read(const char *path, int fd, char* buf, size_t count, off_t file_of
 
         char* recover_at;
 
+        printf("CLIENT: asking chunks from storage server\n");
         for (int i=0; i<ss_num-1; i++) {
             if(failed_server == i){
                 // skip first
+                printf("CLIENT: will skip storage server %d because it's down\n", failed_server);
                 recover_at = tmp_file;
                 tmp_file += skip_by;
             }else{
                 size_t chunk_size;
                 char * ss_buf = recv_chunk(&ss_sockets[i], &chunk_size);
+                printf("CLIENT: received %zu bytes from storage server %d\n", chunk_size, i);
 
                 if(i != ss_num - 2)
                     assert(chunk_size == target_chunk_size);
@@ -243,11 +291,16 @@ int client_read(const char *path, int fd, char* buf, size_t count, off_t file_of
         free(recover_buf);
     }
 
-    memcpy(buf, tmp_file + file_offset, count);
+    fprintf(stderr, "CLIENT: attempt to memcpy\n");
+    fprintf(stderr, "CLIENT: count %zu\n", count);
+    memcpy(buf, tmp_file, count);
+    fprintf(stderr, "CLIENT: attempt to free tmp_file\n");
     free(tmp_file);
 
+    fprintf(stderr, "CLIENT: client read done by %zu\n", count);
+
     // should return exactly the number of bytes requested except on EOF or error
-    return 0;
+    return count;
 }
 
 // replace pwrite in local filesystem
@@ -255,14 +308,15 @@ int client_read(const char *path, int fd, char* buf, size_t count, off_t file_of
 // write from buffer to file at fd at offset
 int client_write(const char* filename, int fd, const char* buf, size_t size, off_t offset) {
 
+    printf("CLIENT: call client_write( %s, %d, %p, %zu, %ld )\n", filename, fd, buf, size, offset);
+
     if(find_file_idx(filename) == (size_t)(-1)){
-        add_file(filename, size);
-    }else{
-        change_file_size(filename, query_filesize(filename) + size);
+        add_file(filename, 0);
     }
-    // divide the files chunks by `ss_num-1`
+    change_file_size(filename, query_filesize(filename) + size);
 
     // Step 1: initialise the pointers
+    // divide the files chunks by `ss_num-1`
     const char *write_headers[ss_num-1];
 
     uint64_t chunk_size = get_chunk_size(size);
@@ -287,7 +341,7 @@ int client_write(const char* filename, int fd, const char* buf, size_t size, off
     int parity_chunk_count = 0;
     for (int i=0; i<ss_num; i++) {
         printf("CLIENT: start %d send_recv_operation\n", i);
-        uint64_t feedback = send_recv_operation(&ss_sockets[i], WRITE_OPERATION, chunk_size, filename);
+        uint64_t feedback = send_recv_operation(&ss_sockets[i], WRITE_OPERATION, chunk_size, filename, offset);
         if (feedback == 1) {
             data_chunk_count += 1;
         } else if (feedback == 0) {
@@ -323,34 +377,5 @@ int client_write(const char* filename, int fd, const char* buf, size_t size, off
 
     printf("CLIENT: done write\n");
 
-    return 0;
-}
-
-// called when "touch tmp.txt"
-int client_utime(const char *path, struct utimbuf *ubuf){
-    memset(ubuf, 0, sizeof(struct utimbuf));
-    return 0;
-}
-
-int client_lstat(const char *path, struct stat *statbuf){
-    memset(statbuf, 0, sizeof(stat));
-
-    //set mode, otherwise get Input/Output Error
-    if(strcmp(path, "/") == 0){
-        statbuf->st_mode = 16895; //for 40777 of dir =>drwxrwxrwx
-    }else{
-        statbuf->st_mode = 33279; //for 100777 of regular file, check __S_IFREG for regular file checking
-    }
-
-    return 0;
-}
-
-// must implement in case of "touch tmp", this will not call write
-int client_open(const char* path, int flags){
-    // create new file
-    log_msg("CLIENT: call open\n");
-    if( (flags & O_WRONLY) | (flags & O_CREAT)){
-        add_file(path, 0);
-    }
-    return 0;
+    return size;
 }

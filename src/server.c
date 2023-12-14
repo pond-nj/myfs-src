@@ -14,7 +14,7 @@
 #define WRITE_OPERATION '2'
 
 #define BUFFER_SIZE 1024
-#define MAX_METADATA_SIZE 100
+#define MAX_METADATA_SIZE 1024 * 1024
 #define MAX_PATH_LEN 100
 
 #define SERVER_PORT_BASE 5550
@@ -32,6 +32,7 @@ struct Map
     char *meta_key;
     char *chunk_path;
     size_t chunk_size;
+    size_t offset;
 };
 
 void error(const char *msg)
@@ -40,48 +41,62 @@ void error(const char *msg)
     exit(1);
 }
 
-int read_handler(char *filename, size_t chunk_size)
+
+char* get_meta_key(const char* filename, size_t offset){
+    // filename | _ | offset | \0
+    // filename_offset?
+    // char* key = (char*) malloc(sizeof(char) * (strlen(filename) + 1) + size());
+    // sprintf(key, "%s_%ld", filename, offset);
+    // return key;
+
+
+    size_t length = snprintf(NULL, 0, "%s_%zu", filename, offset);
+    char* key = (char*)malloc((length + 1) * sizeof(char));
+    sprintf(key, "%s_%zu", filename, offset);
+    return key;
+}
+
+int read_handler(char *filename, size_t chunk_size, size_t offset)
 {
     server_log_msg(server_log, "Server %d: call read_handler\n", n);
     printf("Server %d: call read_handler\n", n);
 
+    char * key = get_meta_key(filename, offset);
+
     // Step 1: check metadata for file existance
     for (int i=0; i<server_metadata_size; i++) {
-        if (strcmp(server_metadata[i].chunk_path, filename) == 0) {
+        if (strcmp(server_metadata[i].meta_key, key) == 0) {
             // file found, send back chunk
+
+            server_log_msg(server_log, "Server %d: file %s found\n", n, filename);
+            printf("Server %d: file %s found\n", n, filename);
+
             if (chunk_size != server_metadata[i].chunk_size) {
+                server_log_msg(server_log, "Server %d: ERROR, chunk size from server metadata and asked chunk size is different\n", n, filename);
                 perror("error for chunk description");
                 return -1;
             }
             
             // Step 2: read from local directory
-            char* target_filepath = (char*)malloc(MAX_PATH_LEN);
+            char target_filepath[MAX_PATH_LEN];
+            sprintf(target_filepath, "%s/%s", mount_dir, SHA256(key));
+            server_log_msg(server_log, "Server %d: will read from local file %s\n", n, target_filepath);
+            printf("Server %d: will read from local file %s\n", n, target_filepath);
 
-            // memcpy(target_filepath, mount_dir, sizeof(mount_dir));
-            // (target_filepath)[sizeof(mount_dir)] = '/';
-            // memcpy(target_filepath + sizeof(mount_dir) + sizeof('/'), SHA256(filename), sizeof(SHA256(filename)));
-
-            memcpy(target_filepath, mount_dir, mount_dir_len);
-            (target_filepath)[mount_dir_len] = '/';
-            
-            char* sha_256 = SHA256(filename);
-            int sha_len = strlen(sha_256);
-            memcpy(target_filepath + mount_dir_len + 1, sha_256, sizeof(sha_len));
-
-            // size_t target_filepath_size = sizeof(mount_dir) + sizeof('/') + sizeof(SHA256(filename));
-            size_t target_filepath_size = sizeof(char) * (mount_dir_len + 1 + sha_len);
-
-            (target_filepath)[target_filepath_size] = '\0';
             FILE *r_file = fopen(target_filepath, "rb");
             if (r_file == NULL) {
+                server_log_msg(server_log, "Server %d: cannot open local file %s\n", n, target_filepath);
+                printf("Server %d: cannot open local file %s\n", n, target_filepath);
                 perror("error opening reading file");
-                free(target_filepath);
                 return -2;
             }
 
             fseek(r_file, 0, SEEK_END);
             long rfile_size = ftell(r_file);
             fseek(r_file, 0, SEEK_SET);
+
+            server_log_msg(server_log, "Server %d: expect local file size %ld\n", n, rfile_size);
+            printf("Server %d: expect local file size %ld\n", n, rfile_size);
 
             char* read_buffer = (char*)malloc(rfile_size + 1);
             if (read_buffer == NULL) {
@@ -91,11 +106,13 @@ int read_handler(char *filename, size_t chunk_size)
             }
             
             size_t read_buffer_size = fread(read_buffer, sizeof(char), rfile_size, r_file);
+            server_log_msg(server_log, "Server %d: read in by size %zu\n", n, read_buffer_size);
+            printf("Server %d: read in by size %zu\n", n, read_buffer_size);
             if (read_buffer_size < rfile_size) {
+                server_log_msg(server_log, "Server %d: ERROR in reading the whole file\n", n);
                 perror("error in reading the whole file");
                 fclose(r_file);
                 free(read_buffer);
-                free(target_filepath);
                 return -4;
             }
 
@@ -104,13 +121,15 @@ int read_handler(char *filename, size_t chunk_size)
 
             // Step 3: send chunk size to bbfs
             unsigned int chunk_size_buffer = htonl(rfile_size);
-            if (write(newsockfd, &chunk_size_buffer, sizeof(rfile_size)) < 0) {
+            if (write(newsockfd, &chunk_size_buffer, sizeof(chunk_size_buffer)) < 0) {
+                server_log_msg(server_log, "Server %d: ERROR sending chunk size to bbfs\n", n);
                 perror("error sending chunk size to bbfs");
                 return -5;
             } 
 
             // Step 4: send chunk data to bbfs
             if (write(newsockfd, read_buffer, read_buffer_size) < 0) {
+                server_log_msg(server_log, "Server %d: ERROR sending chunk data to bbfs\n", n);
                 perror("error sendning chunk data to bbfs");
                 return -6;
             }
@@ -118,22 +137,31 @@ int read_handler(char *filename, size_t chunk_size)
             // Step 5: cleanup
             fclose(r_file);
             free(read_buffer);
-            free(target_filepath);
+            return 0;
         }
     }
+
+    server_log_msg(server_log, "Server %d: file %s not found\n", n, filename);
+    perror("File not found\n");
+    return -7;
 }
 
-int write_handler(char *filename, size_t chunk_size)
+int write_handler(char *filename, size_t chunk_size, size_t offset)
 {
-    server_log_msg(server_log, "Server %d: call write_handler\n", n);
-    printf("Server %d: call write_handler\n", n);
+    char* key = get_meta_key(filename, offset);
+
+    server_log_msg(server_log, "\nServer %d: call write_handler(%s, %zu, %zu)\n", n, filename, chunk_size, offset);
+    printf("\nServer %d: call write_handler(%s, %zu, %zu)\n", n, filename, chunk_size, offset);
 
     // Step 1: check metadata for existing file checks
     server_log_msg(server_log, "Server %d: check metadata for write\n", n);
-    printf("Server %d: check metadata for write\n", n);
+    printf("Server %d: check metadata for write, server_metadata_size: %ld\n", n, server_metadata_size);
+
+    // TODO: I think we allow over written (e.g. writting file with the same name), someone asked this on Piazza
     for (int i=0; i<server_metadata_size; i++) {
-        if (strcmp(server_metadata[i].meta_key, filename) == 0) {
-            perror("filename already exists");
+        // printf("Server %d: compare %s and %s\n", n, key, server_metadata[i].meta_key);
+        if (strcmp(server_metadata[i].meta_key, key) == 0) {
+            perror("filename already exists\n");
             return -1; // error code: error already exists
         }
     }
@@ -170,7 +198,7 @@ int write_handler(char *filename, size_t chunk_size)
 
     // Step 3: update data and metadata
     char target_filepath[MAX_PATH_LEN];
-    sprintf(target_filepath, "%s/%s", mount_dir, SHA256(filename));
+    sprintf(target_filepath, "%s/%s", mount_dir, SHA256(key));
 
     server_log_msg(server_log, "Server %d: preparing metadata and write to disk to local disk %s\n", n, target_filepath);
     printf("Server %d: preparing metadata and write to disk to local disk %s\n", n, target_filepath);
@@ -189,10 +217,14 @@ int write_handler(char *filename, size_t chunk_size)
 
     server_log_msg(server_log, "Server %d: finish metadata and write to disk\n", n);
     printf("Server %d: finish metadata and write to disk\n", n);
-
-    server_metadata[server_metadata_size].meta_key = filename;
+    
+    server_metadata[server_metadata_size].meta_key = key;
     server_metadata[server_metadata_size].chunk_size = chunk_size;
-    server_metadata[server_metadata_size].chunk_path = SHA256(filename);
+    server_metadata[server_metadata_size].chunk_path = SHA256(key);
+
+    // Now str contains the integer as characters
+
+    server_metadata[server_metadata_size].offset = offset;
     server_metadata_size += 1;
 
     // Step 4: cleanup
@@ -276,9 +308,13 @@ int main(int argc, char *argv[])
         if (bbfs_request > 0)
         {
             server_log_msg(server_log, "handling a request from bbfs\n");
-            size_t chunk_size;
+            size_t chunk_size, offset;
             memcpy(&chunk_size, server_buffer + sizeof(char), sizeof(size_t));
             char *filename = server_buffer + sizeof(char) + sizeof(size_t);
+            memcpy(&offset, server_buffer + sizeof(char) + sizeof(uint64_t) + sizeof(char) * (strlen(filename) + 1), sizeof(size_t));
+            
+            server_log_msg(server_log, "Server %d: get message from client %s %zu\n", n, filename, offset);
+
 
             // TODO: send back
             server_log_msg(server_log, "before sending back a response to bbfs\n");
@@ -302,18 +338,18 @@ int main(int argc, char *argv[])
                 // read operation
                 server_log_msg(server_log, "Server %d: Recv READ operation\n", n);
                 printf("Server %d: Recv READ operation\n", n);
-                int ret = read_handler(filename, chunk_size);
-                server_log_msg(server_log, "Server %d: error code: %d", ret);
-                printf("Server %d: error code: %d", n, ret);
+                int ret = read_handler(filename, chunk_size, offset);
+                server_log_msg(server_log, "Server %d: error code: %d\n", n, ret);
+                printf("Server %d: error code: %d\n", n, ret);
             }
             else if (server_buffer[0] == '2')
             {
                 // write operation
                 server_log_msg(server_log, "Server %d: Recv WRITE operation\n", n);
                 printf("Server %d: Recv WRITE operation\n", n);
-                int ret = write_handler(filename, chunk_size);
-                server_log_msg(server_log, "Server %d: error code: %d", n, ret);
-                printf("Server %d: error code: %d", n, ret);
+                int ret = write_handler(filename, chunk_size, offset);
+                server_log_msg(server_log, "Server %d: error code: %d\n", n, ret);
+                printf("Server %d: error code: %d\n", n, ret);
             }
             else
             {
